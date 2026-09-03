@@ -1,97 +1,91 @@
+% MATLAB code for optimizing a six-beam Doppler wind lidar scanning
+% geometry used to retrieve Reynolds-stress statistics from along-beam
+% velocity variances.
+%
+% Script inspired by:
+% Sathe, A., Mann, J., Vasiljevic, N., & Lea, G. (2015).
+% A six-beam method to measure turbulence statistics using ground-based
+% wind lidars. Atmospheric Measurement Techniques, 8(2), 729-740.
 clearvars; close all; clc;
-
+addpath('./functions')
+%% Beam geometries
 nBeams = 6;
-
-% Make sure funOptimizeAngles also returns thetaBest and phiBest
-
 rng(10)
 [Rbest, thetaBest, phiBest] = funOptimizeAngles(nBeams);
 
-fprintf('\nCondition number of optimized R : %.6f\n', cond(Rbest));
-
-% Plot optimized lidar beams
-plotLidarBeams(thetaBest, phiBest, 'Optimized 6-beam lidar geometry');
-
-
-%% Comparison with Sathe et al. (2015)
+% theta is elevation; theta = 90 degrees is vertical.
+% phi is azimuth clockwise from north, as defined in buildR.
 thetaRef = [45 45 45 45 45 90];
 phiRef   = [0 72 144 216 288 288];
 Rref = buildR(thetaRef, phiRef);
-fprintf('\nCondition number in Sathe et al. (2015) : %.6f\n', cond(Rref));
-% Plot reference lidar beams
-plotLidarBeams(thetaRef, phiRef, 'Sathe et al. (2015) reference geometry');
 
+fprintf('\nCondition number of optimized R: %.6f\n', cond(Rbest));
+fprintf('Condition number of Sathe et al. (2015) R: %.6f\n', ...
+    cond(Rref));
 
+plotLidarBeams(thetaBest, phiBest, ...
+    'Optimized 6-beam lidar geometry');
+plotLidarBeams(thetaRef, phiRef, ...
+    'Sathe et al. (2015) reference geometry');
 
-%% Assume the following Reynolds stresses
+%% Reynolds stresses in fixed east-north-up coordinates
 
-sigma2U = 4;                 % m^2/s^2
-sigma2V = sigma2U*0.8.^2;
-sigma2W = sigma2U*0.5.^2;
-sigmaUW = sigma2U/6;
-sigmaVW = 0.3*sigmaUW;
-sigmaUV = 0.05*sigmaUW;
-
-% Reynolds-stress vector
-% Order must match the columns of R:
-% [sigma_u^2; sigma_v^2; sigma_w^2; sigma_uv; sigma_uw; sigma_vw]
-xTrue = [
-    sigma2U
-    sigma2V
-    sigma2W
-    sigmaUV
-    sigmaUW
-    sigmaVW
+% Column order required by buildR:
+% [sigma_x^2; sigma_y^2; sigma_z^2; sigma_xy; sigma_xz; sigma_yz]
+xFixedTrue = [
+    3.6111    % sigma_x^2 [m^2/s^2]
+    2.9489    % sigma_y^2 [m^2/s^2]
+    1.0000    % sigma_z^2 [m^2/s^2]
+    0.6402    % sigma_xy  [m^2/s^2]
+    0.4774    % sigma_xz  [m^2/s^2]
+    0.5065    % sigma_yz  [m^2/s^2]
 ];
 
-%% Get the along-beam variances
+%% Rotate from fixed coordinates to wind-aligned coordinates
 
-sigma2Vr = Rbest*xTrue;
+% Meteorological direction: degrees clockwise from north, indicating the
+% direction FROM which the wind comes.
+windDir = 240;
+s = sind(windDir);
+c = cosd(windDir);
 
-fprintf('\nAlong-beam variances from optimized geometry:\n');
-fprintf('Beam    sigma_vr^2 [m^2/s^2]\n');
-for i = 1:nBeams
-    fprintf('%3d     %12.2f\n', i, sigma2Vr(i));
-end
+% [x; y; z] -> [u; v; w], where u is along wind and v is cross wind.
+T = [-s, -c, 0; c, -s, 0; 0, 0, 1];
 
-%% Retrieve the Reynolds stresses
+CfixedTrue = vectorToTensor(xFixedTrue);
+CwindTrue = T * CfixedTrue * T.';
+xWindTrue = tensorToVector(CwindTrue);
 
-% Prefer backslash over inv(Rbest)*sigma2Vr
-xRetrieved = Rbest\sigma2Vr;
-fprintf('\nRetrieved Reynolds stresses:\n');
-fprintf('%12s    %12s    %12s    %12s\n', ...
-    'Quantity', 'True', 'Retrieved', 'Error');
-names = {
-    'sigma_u^2'
-    'sigma_v^2'
-    'sigma_w^2'
-    'sigma_uv'
-    'sigma_uw'
-    'sigma_vw'
-};
+%% Generate radial variances and retrieve stresses
 
-for i = 1:numel(xTrue)
-    fprintf('%12s    %12.2f    %12.2f    %12.3e\n', ...
-        names{i}, xTrue(i), xRetrieved(i), xRetrieved(i)-xTrue(i));
-end
+% buildR acts on fixed-coordinate stresses. The retrieved tensor is then
+% rotated into wind coordinates inside retrieveStresses.
+[sigma2Vr, xFixedRetrieved, xWindRetrieved] = ...
+    retrieveStresses(Rbest, xFixedTrue, T);
+[~, ~, xWindRetrievedRef] = ...
+    retrieveStresses(Rref, xFixedTrue, T);
 
-%% Compare with Sathe et al. (2015) geometry
+printBeamVariances(sigma2Vr, 'optimized geometry');
 
-thetaRef = [45 45 45 45 45 90];
-phiRef   = [0 72 144 216 288 288];
+namesFixed = {'sigma_x^2'; 'sigma_y^2'; 'sigma_z^2'; ...
+              'sigma_xy';  'sigma_xz';  'sigma_yz'};
+namesWind  = {'sigma_u^2'; 'sigma_v^2'; 'sigma_w^2'; ...
+              'sigma_uv';  'sigma_uw';  'sigma_vw'};
 
-Rref = buildR(thetaRef, phiRef);
+printComparison('Retrieved stresses in fixed lidar coordinates', ...
+    namesFixed, xFixedTrue, xFixedRetrieved);
+printComparison('Retrieved stresses in wind-aligned coordinates', ...
+    namesWind, xWindTrue, xWindRetrieved);
+printComparison('Wind-aligned stresses using Sathe et al. geometry', ...
+    namesWind, xWindTrue, xWindRetrievedRef);
 
-fprintf('\nCondition number in Sathe et al. (2015): %.6f\n', cond(Rref));
 
-sigma2VrRef = Rref*xTrue;
-xRetrievedRef = Rref\sigma2VrRef;
 
-fprintf('\nRetrieved Reynolds stresses using Sathe et al. geometry:\n');
-fprintf('%12s    %12s    %12s    %12s\n', ...
-    'Quantity', 'True', 'Retrieved', 'Error');
 
-for i = 1:numel(xTrue)
-    fprintf('%12s    %12.6f    %12.6f    %12.3e\n', ...
-        names{i}, xTrue(i), xRetrievedRef(i), xRetrievedRef(i)-xTrue(i));
-end
+
+
+
+
+
+
+
