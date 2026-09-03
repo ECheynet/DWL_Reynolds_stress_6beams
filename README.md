@@ -1,25 +1,21 @@
 # Six-Beam Wind Lidar Geometry Optimization
 
-MATLAB code for optimizing a six-beam Doppler wind lidar scanning geometry and retrieving Reynolds-stress statistics from along-beam velocity variances.
+MATLAB code for optimizing a six-beam Doppler lidar geometry and retrieving Reynolds stresses from along-beam velocity variances.
 
-The implementation distinguishes between two coordinate systems:
-
-- **Fixed lidar coordinates** `(x,y,z)`: east, north, and vertical.
-- **Wind-aligned coordinates** `(u,v,w)`: along wind, cross wind, and vertical.
-
-The lidar geometry matrix acts on Reynolds stresses in the fixed coordinate system. After retrieval, the stress tensor is rotated into wind-aligned coordinates.
+The main script contains the executable workflow only. All reusable functions are separate `.m` files in `functions/`; there are no local function definitions in the script.
 
 ## Measurement model
 
-The six-beam geometry matrix `R` relates the along-beam velocity variances to the six independent components of the Reynolds-stress tensor:
+The implementation distinguishes between:
+
+- fixed lidar coordinates `(x,y,z)`: east, north, and vertical;
+- wind-aligned coordinates `(u,v,w)`: along wind, cross wind, and vertical.
+
+The beam matrix acts on stresses in fixed coordinates:
 
 ```text
 sigma2Vr = R * xFixed
-```
 
-where
-
-```text
 xFixed = [sigma_x^2;
           sigma_y^2;
           sigma_z^2;
@@ -28,26 +24,17 @@ xFixed = [sigma_x^2;
           sigma_yz]
 ```
 
-and `sigma2Vr` contains one radial-velocity variance per beam.
-
-The fixed-coordinate stresses are retrieved with MATLAB's backslash operator:
+`sigma2Vr` contains one radial-velocity variance per beam. The fixed stresses are retrieved with
 
 ```matlab
 xFixedRetrieved = R \ sigma2Vr;
 ```
 
-The backslash operator is preferred over explicitly calculating `inv(R)`.
+MATLAB's backslash operator is preferred over explicitly calculating `inv(R)`.
 
 ## Beam convention
 
-For beam `i`, the elevation angle is `theta_i` and the azimuth angle is `phi_i`.
-
-- `theta_i = 0` degrees is horizontal.
-- `theta_i = 90` degrees is vertical.
-- `phi_i` is measured clockwise from north.
-- Positive radial velocity follows the beam unit-vector direction.
-
-The line-of-sight velocity is
+For beam `i`, `theta_i` is elevation and `phi_i` is azimuth clockwise from north:
 
 ```text
 v_r,i = x*cos(theta_i)*sin(phi_i)
@@ -55,88 +42,52 @@ v_r,i = x*cos(theta_i)*sin(phi_i)
       + z*sin(theta_i)
 ```
 
-The corresponding beam unit vector is
+Thus
 
 ```text
-e_i = [cos(theta_i)*sin(phi_i),
-       cos(theta_i)*cos(phi_i),
-       sin(theta_i)]
-```
+e_i = [a_i, b_i, c_i]
 
-Define the direction cosines
-
-```text
 a_i = cos(theta_i)*sin(phi_i)
 b_i = cos(theta_i)*cos(phi_i)
 c_i = sin(theta_i)
 ```
 
-Then row `i` of `R` is
+and row `i` of `R` is
 
 ```text
-R_i = [a_i^2,
-       b_i^2,
-       c_i^2,
-       2*a_i*b_i,
-       2*a_i*c_i,
-       2*b_i*c_i]
+R_i = [a_i^2, b_i^2, c_i^2,
+       2*a_i*b_i, 2*a_i*c_i, 2*b_i*c_i]
 ```
 
-This ordering must match the ordering of `xFixed`.
+Here `theta = 0` degrees is horizontal and `theta = 90` degrees is vertical. A vertical beam's azimuth is arbitrary.
 
-## Wind-direction transformation
+## Wind-coordinate rotation
 
-Let `windDir` be the meteorological wind direction in degrees clockwise from north, indicating the direction **from** which the wind comes. The transformation from fixed east-north-up coordinates to along-wind, cross-wind, and vertical coordinates is
+Let `windDir` be the meteorological direction in degrees clockwise from north, indicating where the wind comes from. The fixed-to-wind transformation is
 
 ```matlab
 s = sind(windDir);
 c = cosd(windDir);
-
 T = [-s, -c, 0;
       c, -s, 0;
       0,  0, 1];
 ```
 
-If the velocity fluctuations satisfy
-
-```text
-qWind = T * qFixed
-```
-
-their covariance tensors satisfy
-
-```text
-Cwind = T * Cfixed * T.'
-```
-
-This follows directly from the covariance definition:
+If `qWind = T*qFixed`, the covariance tensors obey
 
 ```text
 Cwind = <qWind*qWind.'>
-      = <(T*qFixed)*(T*qFixed).'>
       = T*<qFixed*qFixed.'>*T.'
       = T*Cfixed*T.'
 ```
 
-Both velocity factors in the covariance must be rotated, which is why `T` appears on the left and `T.'` appears on the right.
-
-Because `T` is orthogonal, the inverse transformation is
+Both velocity factors in the covariance must be rotated, which places `T` on the left and `T.'` on the right. Since `T` is orthogonal, the inverse transformation is
 
 ```matlab
 Cfixed = T.' * Cwind * T;
 ```
 
-## Fixed and wind-aligned stress vectors
-
-The fixed-coordinate tensor is assembled as
-
-```matlab
-Cfixed = [sigma2X, sigmaXY, sigmaXZ;
-          sigmaXY, sigma2Y, sigmaYZ;
-          sigmaXZ, sigmaYZ, sigma2Z];
-```
-
-After applying `Cwind = T*Cfixed*T.'`, the wind-aligned vector is
+The corresponding wind-aligned vector is
 
 ```text
 xWind = [sigma_u^2;
@@ -147,31 +98,69 @@ xWind = [sigma_u^2;
          sigma_vw]
 ```
 
-The fixed and wind-aligned vectors describe the same physical Reynolds-stress tensor in different coordinate systems. The unaligned values should not be selected independently; they are related by the wind-direction rotation.
+`xFixed` and `xWind` describe the same Reynolds-stress tensor in different coordinate systems; they are not independent inputs.
 
-## Repository contents
+## Repository structure
 
-| File | Description |
+```text
+.
+|-- Example_optimize_angles.m
+|-- README.md
+`-- functions/
+    |-- buildR.m
+    |-- funOptimizeAngles.m
+    |-- plotLidarBeams.m
+    |-- printBeamVariances.m
+    |-- printComparison.m
+    |-- retrieveStresses.m
+    |-- tensorToVector.m
+    `-- vectorToTensor.m
+```
+
+| File | Purpose |
 | --- | --- |
-| `Example_optimize_angles.m` | Main example: optimizes and plots the geometry, compares it with the reference geometry, generates synthetic radial variances, retrieves fixed-coordinate stresses, and rotates them into wind coordinates. |
-| `funOptimizeAngles.m` | Searches for elevation and azimuth angles using MATLAB's genetic algorithm function `ga`. |
-| `buildR.m` | Builds the geometry matrix from the beam elevation and azimuth angles. |
-| `plotLidarBeams.m` | Plots the beam unit vectors using the same angle convention as `buildR`. |
+| `Example_optimize_angles.m` | Function-free main script: optimization, comparison, plots, synthetic measurements, retrieval, rotation, and reporting. |
+| `functions/buildR.m` | Builds `R` from elevation and azimuth angles. |
+| `functions/funOptimizeAngles.m` | Optimizes the beam angles with `ga`. |
+| `functions/plotLidarBeams.m` | Plots the beam unit vectors. |
+| `functions/retrieveStresses.m` | Generates radial variances, retrieves fixed stresses, and rotates them. |
+| `functions/printBeamVariances.m` | Prints radial variances. |
+| `functions/printComparison.m` | Prints true, retrieved, and error values. |
+| `functions/vectorToTensor.m` | Converts the six-component vector to a symmetric tensor. |
+| `functions/tensorToVector.m` | Converts a symmetric tensor to the six-component vector. |
 
-The MATLAB filenames must match their primary function names. For example, use `buildR.m`, not `buildR(1).m`.
+MATLAB function filenames must match their primary function names.
 
-## Requirements
+## Requirements and quick start
 
 - MATLAB
 - Global Optimization Toolbox for `ga`
-- Base MATLAB graphics for beam visualization
+- Base MATLAB graphics
 
-## Optimization problem
+From the repository root, add `functions/` to the path and run the script:
 
-The optimizer searches for six angle pairs:
+```matlab
+addpath('functions')
+Example_optimize_angles
+```
+
+The script:
+
+1. optimizes and plots the six-beam geometry;
+2. constructs and plots the Sathe et al. reference geometry;
+3. compares their condition numbers;
+4. defines a fixed-coordinate Reynolds-stress tensor;
+5. converts it to wind coordinates;
+6. generates synthetic radial variances and retrieves the stresses;
+7. reports fixed- and wind-coordinate results for both geometries.
+
+## Optimization
+
+The optimizer searches for six integer-valued angle pairs on a 1-degree grid:
 
 ```text
-(theta_i, phi_i), i = 1, ..., 6
+45 deg <= theta_i <= 90 deg
+0 deg  <= phi_i   <= 360 deg
 ```
 
 The implemented objective is
@@ -180,158 +169,51 @@ The implemented objective is
 minimize log(cond(R))
 ```
 
-where `cond(R)` is the 2-norm condition number. A lower condition number generally reduces numerical sensitivity when solving the linear system, although it is not a complete statistical error model.
+A lower 2-norm condition number generally reduces numerical sensitivity, but it is not a complete statistical error model. This is not the exact Sathe et al. (2015) criterion, which is based on random-error amplification in the retrieved stresses.
 
-The current bounds are
+Because `ga` is stochastic, it can return a near-optimal geometry whose condition number is slightly higher than the reference value. The example uses `rng(10)` for reproducibility. Equivalent or nearly equivalent geometries can also differ by beam ordering, a common azimuthal rotation, or the azimuth assigned to a vertical beam.
 
-```text
-45 deg <= theta_i <= 90 deg
-0 deg  <= phi_i   <= 360 deg
-```
+## Retrieval example
 
-All angles are constrained to integer values on a 1-degree grid.
-
-### Difference from Sathe et al. (2015)
-
-This repository uses a genetic algorithm to minimize `log(cond(R))`. It does **not** reproduce the exact optimization criterion from Sathe et al. (2015), which is based on random-error amplification under assumptions about the radial-variance errors.
-
-Because `ga` is stochastic, it can return a near-optimal geometry whose condition number is slightly higher than that of the reference geometry. Therefore, the reported condition numbers should always be compared explicitly.
-
-## Quick start
-
-Run the main script:
+The example starts from fixed-coordinate stresses:
 
 ```matlab
-Example_optimize_angles
-```
+xFixedTrue = [3.6111; 2.9489; 1.0000; ...
+              0.6402; 0.4774; 0.5065];
 
-The script will:
-
-1. Optimize the six-beam geometry.
-2. Print the optimized beam angles, matrix rank, and condition number.
-3. Plot the optimized geometry.
-4. Build and plot the Sathe et al. reference geometry.
-5. Define a Reynolds-stress tensor in fixed coordinates.
-6. Rotate the tensor into wind-aligned coordinates.
-7. Generate synthetic along-beam variances.
-8. Retrieve the fixed-coordinate stresses from those variances.
-9. Rotate the retrieved tensor into wind coordinates.
-10. Compare the true and retrieved values for both geometries.
-
-## Example workflow
-
-Optimize the geometry and construct the reference geometry:
-
-```matlab
-clearvars; close all; clc;
-
-nBeams = 6;
-rng(10)
-[Rbest, thetaBest, phiBest] = funOptimizeAngles(nBeams);
-
-thetaRef = [45 45 45 45 45 90];
-phiRef   = [0 72 144 216 288 288];
-Rref = buildR(thetaRef, phiRef);
-
-fprintf('\nCondition number of optimized R: %.6f\n', cond(Rbest));
-fprintf('Condition number of reference R: %.6f\n', cond(Rref));
-```
-
-Plot the two geometries:
-
-```matlab
-plotLidarBeams(thetaBest, phiBest, ...
-    'Optimized 6-beam lidar geometry');
-plotLidarBeams(thetaRef, phiRef, ...
-    'Sathe et al. (2015) reference geometry');
-```
-
-Define fixed-coordinate stresses:
-
-```matlab
-xFixedTrue = [
-    3.6111    % sigma_x^2
-    2.9489    % sigma_y^2
-    1.0000    % sigma_z^2
-    0.6402    % sigma_xy
-    0.4774    % sigma_xz
-    0.5065    % sigma_yz
-];
-
-CfixedTrue = [xFixedTrue(1), xFixedTrue(4), xFixedTrue(5);
-              xFixedTrue(4), xFixedTrue(2), xFixedTrue(6);
-              xFixedTrue(5), xFixedTrue(6), xFixedTrue(3)];
-```
-
-Rotate the true tensor into wind coordinates:
-
-```matlab
 windDir = 240;
 s = sind(windDir);
 c = cosd(windDir);
 T = [-s, -c, 0; c, -s, 0; 0, 0, 1];
 
+CfixedTrue = vectorToTensor(xFixedTrue);
 CwindTrue = T * CfixedTrue * T.';
-```
+xWindTrue = tensorToVector(CwindTrue);
 
-Generate radial variances and retrieve the fixed-coordinate stresses:
-
-```matlab
 sigma2Vr = Rbest * xFixedTrue;
 xFixedRetrieved = Rbest \ sigma2Vr;
+CwindRetrieved = T * vectorToTensor(xFixedRetrieved) * T.';
+xWindRetrieved = tensorToVector(CwindRetrieved);
 ```
 
-Rotate the retrieved tensor into wind coordinates:
-
-```matlab
-CfixedRetrieved = [xFixedRetrieved(1), xFixedRetrieved(4), xFixedRetrieved(5);
-                   xFixedRetrieved(4), xFixedRetrieved(2), xFixedRetrieved(6);
-                   xFixedRetrieved(5), xFixedRetrieved(6), xFixedRetrieved(3)];
-
-CwindRetrieved = T * CfixedRetrieved * T.';
-```
-
-For the supplied fixed stresses and `windDir = 240`, the corresponding wind-aligned vector is approximately
+For these values, `xWindTrue` is approximately
 
 ```text
-[3.999979;
- 2.560021;
- 1.000000;
- 0.033359;
- 0.666691;
- 0.199942]
+[3.999979; 2.560021; 1.000000;
+ 0.033359; 0.666691; 0.199942]
 ```
 
-The small difference from `[4; 2.56; 1; 0.033333; 0.666667; 0.2]` is caused by rounding the supplied fixed-coordinate stresses to four decimal places.
+The difference from `[4; 2.56; 1; 0.033333; 0.666667; 0.2]` comes from rounding `xFixedTrue` to four decimal places.
 
-## Interpreting the synthetic retrieval
+## Interpreting the test
 
-In the example, the same matrix first generates and then retrieves noise-free radial variances:
-
-```matlab
-sigma2Vr = R * xFixedTrue;
-xFixedRetrieved = R \ sigma2Vr;
-```
-
-Consequently, every full-rank geometry should recover the prescribed stresses to floating-point precision. Errors around `1e-16` are numerical roundoff, not physical retrieval error.
-
-This test verifies the algebra and coordinate transformations. It does not establish robustness to measurement noise, spatial separation between beams, nonstationarity, or violations of horizontal homogeneity. Those effects require noisy simulations, Monte Carlo analysis, or experimental data.
-
-## Reproducibility and equivalent geometries
-
-The optimization uses a genetic algorithm, so its result can vary unless the random seed is fixed. The example uses
-
-```matlab
-rng(10)
-```
-
-Geometries can also be physically equivalent under beam reordering, a common azimuthal rotation, or an arbitrary azimuth assigned to a vertical beam. Because the six-component stress vector does not use orthonormal tensor weighting, numerically reported condition numbers for rotated geometries can be nearly, rather than exactly, identical.
+The same matrix generates and retrieves noise-free measurements, so every full-rank geometry should recover the input to floating-point precision. Errors near `1e-16` are numerical roundoff. This verifies the algebra and coordinate rotation, not robustness to measurement noise, spatial separation, nonstationarity, or violations of horizontal homogeneity. Those effects require noisy simulations, Monte Carlo analysis, or experimental data.
 
 ## Reference
 
 Sathe, A., Mann, J., Vasiljevic, N., & Lea, G. (2015). A six-beam method to measure turbulence statistics using ground-based wind lidars. *Atmospheric Measurement Techniques*, 8(2), 729-740. [https://doi.org/10.5194/amt-8-729-2015](https://doi.org/10.5194/amt-8-729-2015)
 
-If you use this repository, cite Sathe et al. (2015) for the six-beam lidar concept and state that the optimization implementation used here is not identical to the optimization method in that paper.
+This repository should cite Sathe et al. for the six-beam concept while noting that its optimization implementation is different.
 
 ## License
 
